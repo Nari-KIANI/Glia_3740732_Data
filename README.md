@@ -5,11 +5,11 @@ Repository of series of data sets used in the publications of the paper "Dorso-V
 
 ##  General Information
 
-Dataset DOI: [10.5281/zenodo.20933398] (https://doi.org/10.5281/zenodo.20933397)
-Associated Publication: Manuscript 3740732, titled "Dorso-Ventral and Night-Day Regulation of Extracellular K+ Dynamics in Mouse Hippocampal Astrocytes"
-Principal Author: Nariman KIANI, Aix Marseille Univ, INSERM, INS, Inst Neurosci Syst, Marseille, France
-Date of Data Collection: Between September, 2022 and May, 2026
-*Funding Sources: 
+* Dataset DOI: [10.5281/zenodo.20933398] (https://doi.org/10.5281/zenodo.20933397)
+* Associated Publication: Manuscript 3740732, titled "Dorso-Ventral and Night-Day Regulation of Extracellular K+ Dynamics in Mouse Hippocampal Astrocytes"
+* Principal Author: Nariman KIANI, Aix Marseille Univ, INSERM, INS, Inst Neurosci Syst, Marseille, France
+* Date of Data Collection: Between September, 2022 and May, 2026
+* Funding Sources: 
 European Union’s Horizon 2020 Research and Innovation Program under Grant Agreement Number 956325, the Fondation pour la Recherche Médicale (FRM) FDT202404018111, the Croatian Science Foundation under project number IP-2022-10-8493, and Petroleum Technology Development Fund (PTDF/ED/OSS/PHD/KA/2015/22).
 
 ---
