@@ -1,0 +1,358 @@
+#R script for immunihistochemistrey data###########################
+
+#Packages
+
+# Core Data Science, Plotting & Estimation Stats
+library(tidyverse)
+library(dabestr)
+
+# Frequentist Modeling & Distribution Fitting
+library(fitdistrplus)
+library(car)
+library(permuco)
+
+# Bayesian Modeling & Post-Hocs
+library(brms)
+library(emmeans)
+
+####################################################################################################
+
+datum <- read.csv("Microscopy.CSV", sep = ",")
+
+#Some cleaning
+datum <- data.frame(datum)
+
+datum$Region <- as.factor(datum$Region)
+datum$ZT <- as.factor(datum$ZT)
+datum$ZT_aniaml <- as.factor(datum$ZT_aniaml)
+
+datum$Condition <- as.factor(datum$Condition)
+datum$Animal <- as.factor(datum$Animal)
+
+
+datum %>%
+  group_by(Region, ZT) %>%
+  tally() # or count()
+
+#######################################################################
+#Functions##################################################
+
+#For plots
+custom_theme <- function() {
+  theme_bw() +
+    theme(
+      panel.border = element_blank(), 
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(), 
+      axis.line = element_line(colour = "black", size = 1),
+      axis.ticks.x = element_line(size = 1.5, colour = "black"),
+      axis.text.x = element_text(size = 24, color = "black"), 
+      axis.title.x = element_text(size = 22, colour = "black"),
+      axis.title.y = element_text(size = 24, color = "black"), 
+      axis.text.y = element_text(size = 24, color = "black"),
+      axis.ticks.y = element_line(size = 1.5, colour = "black"),
+      legend.text = element_text(size = 24, color = "black"), 
+      legend.title = element_blank(), 
+      legend.position = "right",
+      
+      strip.background = element_blank(),       
+      strip.text = element_text(size = 24, face = "bold", color = "black"),
+      strip.placement = "outside",  # NEW: place facet strip outside the plot
+      panel.spacing = unit(1.5, "lines")
+    )
+}
+theme_set(custom_theme())
+
+# Automatically fit and compare multiple distributions
+
+auto_fit <- function(data, dist_names = c("norm", "lnorm", "gamma", "weibull", "exp")) {
+  fits <- list()
+  for(dist in dist_names) {
+    tryCatch({
+      fits[[dist]] <- fitdist(data, dist)
+    }, error = function(e) NULL)
+  }
+  
+  # Compare AIC
+  aic_vals <- sapply(fits, function(x) if(!is.null(x)) x$aic else NA)
+  aic_df <- data.frame(Distribution = names(aic_vals), AIC = aic_vals)
+  aic_df <- aic_df[order(aic_df$AIC), ]
+  
+  return(list(best_fit = fits[[aic_df$Distribution[1]]], all_fits = fits, comparison = aic_df))
+}
+
+
+#Omega-squared function
+
+calculate_omega_from_anova <- function(anova_df) {
+  # Extract values from the ANOVA data frame
+  SS_effects <- anova_df$SS[1:(nrow(anova_df)-1)]  # All but last row (residuals)
+  df_effects <- anova_df$df[1:(nrow(anova_df)-1)]
+  SS_residual <- anova_df$SS[nrow(anova_df)]
+  df_residual <- anova_df$df[nrow(anova_df)]
+  
+  # Get effect names
+  effect_names <- rownames(anova_df)[1:(nrow(anova_df)-1)]
+  
+  # Calculate total sum of squares
+  SS_total <- sum(SS_effects) + SS_residual
+  MS_residual <- SS_residual / df_residual
+  
+  # Calculate omega squared for each effect
+  omega_squared <- (SS_effects - df_effects * MS_residual) / (SS_total + MS_residual)
+  
+  # Create results data frame
+  results <- data.frame(
+    Effect = effect_names,
+    OmegaSquared = omega_squared
+  )
+  
+  return(results)
+}
+
+#Summarizing brm analysis
+
+summarize_significant_effects <- function(model, ci_level = 0.95, digits = 2) {
+  # Extract fixed effect estimates
+  fixed_effects <- as.data.frame(fixef(model, probs = c((1 - ci_level)/2, 1 - (1 - ci_level)/2)))
+  
+  # Rename columns
+  colnames(fixed_effects)[c(3, 4)] <- c("CI_low", "CI_high")
+  
+  # Add significance flag as logical (TRUE/FALSE)
+  fixed_effects$Significant <- sign(fixed_effects$CI_low) == sign(fixed_effects$CI_high)
+  
+  # Round for readability
+  fixed_effects <- round(fixed_effects, digits)
+  
+  return(fixed_effects)
+}
+
+# Function to test 2-way ANOVA assumptions
+test_anova_assumptions <- function(data, dv, iv1, iv2) {
+  
+  # Ensure the car package is available for Levene's Test
+  if (!requireNamespace("car", quietly = TRUE)) {
+    stop("The 'car' package is required. Please run: install.packages('car')")
+  }
+  
+  # 1. Construct the formula
+  formula_str <- paste(dv, "~", iv1, "*", iv2)
+  form <- as.formula(formula_str)
+  
+  # 2. Fit the ANOVA model
+  model <- aov(form, data = data)
+  resids <- residuals(model)
+  
+  cat("\n--- 1. Homogeneity of Variance (Levene's Test) ---\n")
+  # Tests if variance is equal across all groups
+  levene <- car::leveneTest(form, data = data)
+  print(levene)
+  
+  cat("\n--- 2. Normality of Residuals (Shapiro-Wilk Test) ---\n")
+  # Tests if the errors are normally distributed
+  # Note: Shapiro-Wilk is sensitive to large sample sizes
+  shapiro <- shapiro.test(resids)
+  print(shapiro)
+  
+  cat("\n--- 3. Visual Diagnostics ---\n")
+  # Set up a 1x2 plotting area
+  old_par <- par(mfrow = c(1, 2))
+  
+  # Residuals vs Fitted: Look for a random "cloud" (no funnel shapes)
+  plot(model, which = 1, main = "Residuals vs Fitted")
+  
+  # Normal Q-Q: Points should follow the diagonal line
+  plot(model, which = 2, main = "Normal Q-Q Plot")
+  
+  # Reset plotting parameters
+  par(old_par)
+  
+  cat("\nInterpretation Guide:\n")
+  cat("- Levene's p > 0.05: Assumption met (Equal Variance).\n")
+  cat("- Shapiro's p > 0.05: Assumption met (Normal Distribution).\n")
+}
+
+# Example Usage:
+# test_anova_assumptions(data = my_data, dv = "Intensity", iv1 = "Region", iv2 = "Time")
+
+
+#Normalized Integrated denisty #################################################################
+
+#The Kir4.1/GFAP was normalized to dorsal samples in each batch to account for between-batch variability
+
+test_anova_assumptions(data = datum, dv = "Int_norm", iv1 = "Region", iv2 = "ZT")
+#normal distribution and homogeneous variance 
+
+#Paramteric Estimation and effect size 
+
+set.seed(123)
+model_1 <- aovperm(Int_norm ~ Region * ZT, data = datum)
+anova <- data.frame(summary(model_1))
+
+#                 SS  df         F parametric.P..F. resampled.P..F.
+#Region    1.1227610   1 16.150608     0.0001068596          0.0004
+#ZT        0.3118533   2  2.242962     0.1109335711          0.1116
+#Region:ZT 0.3620721   2  2.604154     0.0784805674          0.0734
+#Residuals 7.7165186 111        NA               NA              NA
+
+calculate_omega_from_anova(anova)
+
+#   Effect OmegaSquared
+#    Region   0.10991060
+#        ZT   0.01803421
+# Region:ZT   0.02327477
+
+#Regional difference irrespective of the effect of time
+
+dabest_obj <- load(
+  data = datum, x = Region, y = Int_norm,
+  idx = c("DH", "VH")
+) %>% mean_diff()
+
+# Printing dabest object
+print(dabest_obj) #mean difference with confidence interval and two-sided permutation p-value
+dabest_plot(dabest_obj) #plotting the analyses
+
+##############################################################################
+#Bayesian analysis
+
+model_int <- brm(
+  formula = Int_norm ~ Region * ZT,
+  family = gaussian(link = "identity"),
+  data = datum,
+  iter = 4000, chains = 4, seed = 123
+)
+summarize_significant_effects(model_int)
+
+#Post-hoc analyses##################################
+library(emmeans)
+
+#Fixing ZT: pairwise with region
+model_int_emmeans <- emmeans(model_int, ~ Region |ZT )
+
+
+# 2. Get pairwise comparisons (no Bonferroni needed in Bayesian)
+
+fit_contrasts <- pairs(model_int_emmeans)
+summary(fit_contrasts)
+
+#############################################################
+
+#Fixing Region: pairwise with ZT
+model_int_emmeans <- emmeans(model_int, ~  ZT|Region )
+
+
+# 2. Get pairwise comparisons (no Bonferroni needed in Bayesian)
+
+fit_contrasts <- pairs(model_int_emmeans)
+summary(fit_contrasts)
+
+#####################################################################
+
+#Plotting with the model and real values##################################
+
+new_data <- expand.grid(
+  ZT = factor(c("3", "8", "15"), levels = c("3", "8", "15")),
+  Region = factor(c("DH", "VH"), levels = c("DH", "VH"))
+)
+
+# Get fitted values with 95% CI
+fitted_vals <- fitted(model_int, newdata = new_data, re_formula = NA, probs = c(0.025, 0.975))
+fitted_df <- cbind(new_data, fitted_vals)
+
+ggplot(fitted_df, aes(x = ZT, y = Estimate, color = Region, group = Region)) +
+  geom_point(position = position_dodge(width = 0.3), size = 4) +
+  geom_line(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = Q2.5, ymax = Q97.5), width = 0.2, position = position_dodge(width = 0.3)) +
+  
+  # ADD RAW DATA POINTS (jittered for visibility)
+  geom_jitter(data = datum,
+              aes(x = ZT, y = Int_norm, color = Region),
+              position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.5),
+              alpha = 0.5, size = 3, inherit.aes = FALSE) +
+  
+  labs(y = "Norm. Kir4.1/GFAP Int. Density") +
+  custom_theme() +
+  scale_color_manual(values = c("DH" = "red", "VH" = "blue"))
+
+######################################################################################
+
+#GFAP integrated density, working with log_10 values for better handling of large values
+
+
+test_anova_assumptions(data = datum, dv = "LogGFAP", iv1 = "Region", iv2 = "ZT")
+#normal distribution and homogenous variance
+
+set.seed(123)
+model_1 <- aovperm(LogGFAP ~ Region * ZT, data = datum)
+Int_model <- data.frame(summary(model_1)) 
+
+#                    SS  df           F parametric.P..F. resampled.P..F.
+#Region    3.695811e-05   1 0.001540576       0.96876144          0.9716
+#ZT        1.487538e-01   2 3.100356174       0.04895492          0.0464
+#Region:ZT 1.043488e-02   2 0.217485728       0.80488110          0.7990
+#Residuals 2.662868e+00 111          NA               NA              NA
+
+calculate_omega_from_anova(Int_model)
+#     Effect OmegaSquared
+#    Region -0.008416072
+#        ZT  0.035408046
+# Region:ZT -0.013191716
+
+#Bayesian analysis###########################################
+
+Model_GFAP <- brm(
+  formula = LogGFAP ~ Region * ZT,
+  family = gaussian(link = "identity"),
+  data = datum,
+  iter = 4000, chains = 4, seed = 123
+)
+summarize_significant_effects(Model_GFAP)
+
+
+
+#Plotting###########################################################################
+
+new_data <- expand.grid(
+  ZT = factor(c("3", "8", "15"), levels = c("3", "8", "15")),
+  Region = factor(c("DH", "VH"), levels = c("DH", "VH"))
+)
+
+# Get fitted values with 95% CI
+fitted_vals <- fitted(Model_GFAP, newdata = new_data, re_formula = NA, probs = c(0.025, 0.975))
+fitted_df <- cbind(new_data, fitted_vals)
+
+ggplot(fitted_df, aes(x = ZT, y = Estimate, color = Region, group = Region)) +
+  geom_point(position = position_dodge(width = 0.3), size = 4) +
+  geom_line(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = Q2.5, ymax = Q97.5), width = 0.2, position = position_dodge(width = 0.3)) +
+  
+  # ADD RAW DATA POINTS (jittered for visibility)
+  geom_jitter(data = datum,
+              aes(x = ZT, y = LogGFAP, color = Region),
+              position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.5),
+              alpha = 0.5, size = 3, inherit.aes = FALSE) +
+  
+  labs(y = "Log10 GFAP Integrated Density") +
+  custom_theme() +
+  scale_color_manual(values = c("DH" = "red", "VH" = "blue"))
+
+
+############################################################################
+#Area of Kir4.1-positive pixels over GFAP
+
+test_anova_assumptions(data = datum, dv = "Area_F", iv1 = "Region", iv2 = "ZT")
+
+set.seed(123)
+model_1 <- aovperm(Area_F ~ Region * ZT, data = datum)
+Int_model <- data.frame(summary(model_1)) 
+
+#                  SS  df         F parametric.P..F. resampled.P..F.
+#Region      3.436927   1 0.5979501        0.4410049          0.4500
+#ZT         19.104741   2 1.6619032        0.1944643          0.1910
+#Region:ZT   4.082457   2 0.3551290        0.7018766          0.7008
+#Residuals 638.011379 111        NA               NA              NA
+
+
+
