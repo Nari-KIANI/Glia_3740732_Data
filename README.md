@@ -66,9 +66,9 @@ Values are baseline-normalized to the mean of `DH` at `ZT3`.
 Additional variables:
 * `t_incub`: incubation time in Meclofenamic acid (MFA) in minutes
 *  `Rp`:  pipette resistance in MΩ
-* `Rs1`: Initial series resistance
+* `Rs1`: Initial series resistance in MΩ
 * `Rs2.Rs1`: Ratio of series resistance after barium application to baseline
-* `Rt1`: initial input resistance calculated from inverting the slope of holding potential to current
+* `Rt1`: initial input resistance calculated from inverting the slope of holding potential to current in MΩ
 
 #### `Microscopy.CSV`
 * `Int_norm`: Normalized integrated density of Kir4.1/GFAP fluorescence, batch-normalized against dorsal control samples to minimize inter-staining variance.
